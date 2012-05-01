@@ -30,6 +30,7 @@ from optparse import OptionParser
 from sqlalchemy.ext.sqlsoup import SqlSoup
 from subprocess import *
 
+from quantum.plugins.openvswitch import ovs_models
 
 # Global constants.
 OP_STATUS_UP = "UP"
@@ -127,7 +128,7 @@ class OVSBridge:
     def add_tunnel_port(self, port_name, remote_ip):
         self.run_vsctl(["add-port", self.br_name, port_name])
         self.set_db_attribute("Interface", port_name, "type", "gre")
-        self.set_db_attribute("Interface", port_name, "options:remote_ip", 
+        self.set_db_attribute("Interface", port_name, "options:remote_ip",
             remote_ip)
         self.set_db_attribute("Interface", port_name, "options:in_key", "flow")
         self.set_db_attribute("Interface", port_name, "options:out_key",
@@ -327,13 +328,11 @@ class OVSQuantumTunnelAgent(object):
     # Upper bound on available vlans.
     MAX_VLAN_TAG = 4094
 
-    def __init__(self, integ_br, tun_br, remote_ip_file, local_ip,
-                 root_helper):
+    def __init__(self, integ_br, tun_br, local_ip, root_helper):
         '''Constructor.
 
         :param integ_br: name of the integration bridge.
         :param tun_br: name of the tunnel bridge.
-        :param remote_ip_file: name of file containing list of hypervisor IPs.
         :param local_ip: local IP address of this hypervisor.'''
         self.root_helper = root_helper
         self.available_local_vlans = set(
@@ -341,7 +340,9 @@ class OVSQuantumTunnelAgent(object):
                    OVSQuantumTunnelAgent.MAX_VLAN_TAG))
         self.setup_integration_br(integ_br)
         self.local_vlan_map = {}
-        self.setup_tunnel_br(tun_br, remote_ip_file, local_ip)
+        self.local_ip = local_ip
+        self.tunnel_count = 0
+        self.setup_tunnel_br(tun_br)
 
     def provision_local_vlan(self, net_uuid, lsw_id):
         '''Provisions a local VLAN.
@@ -437,33 +438,17 @@ class OVSQuantumTunnelAgent(object):
         # switch all traffic using L2 learning
         self.int_br.add_flow(priority=1, actions="normal")
 
-    def setup_tunnel_br(self, tun_br, remote_ip_file, local_ip):
+    def setup_tunnel_br(self, tun_br):
         '''Setup the tunnel bridge.
 
-        Reads in list of IP addresses. Creates GRE tunnels to each of these
-        addresses and then clears out existing flows. local_ip is the address
-        of the local node. A tunnel is not created to this IP address.
+        Creates tunnel bridge, and links it to the integration bridge using
+        a patch port.
 
-        :param tun_br: the name of the tunnel bridge.
-        :param remote_ip_file: path to file that contains list of destination
-            IP addresses.
-        :param local_ip: the ip address of this node.'''
+        :param tun_br: the name of the tunnel bridge.'''
         self.tun_br = OVSBridge(tun_br, self.root_helper)
         self.tun_br.reset_bridge()
         self.patch_int_ofport = self.tun_br.add_patch_port("patch-int",
                                                            "patch-tun")
-        try:
-            with open(remote_ip_file, 'r') as f:
-                remote_ip_list = f.readlines()
-                clean_ips = (x.rstrip() for x in remote_ip_list)
-                tunnel_ips = (x for x in clean_ips if x != local_ip and x)
-                for i, remote_ip in enumerate(tunnel_ips):
-                    self.tun_br.add_tunnel_port("gre-" + str(i), remote_ip)
-        except Exception, e:
-            LOG.error("Error configuring tunnels: '%s' %s"
-                      % (remote_ip_file, str(e)))
-            raise
-
         self.tun_br.remove_all_flows()
         # default drop
         self.tun_br.add_flow(priority=1, actions="drop")
@@ -499,6 +484,23 @@ class OVSQuantumTunnelAgent(object):
         return dict([(bind.network_id, bind.vlan_id)
             for bind in lsw_id_binds])
 
+    def get_tunnel_ips(self, db):
+        '''Get list of tunnel IP addresses from Quantum database.
+        The central quantum database 'ovs_quantum' resides on the openstack
+        mysql server.
+
+        Also ensures that this node's IP is the main database table.
+
+        :returns: a list of all non-local ip addresses.'''
+        tunnel_ips = [ x.ip_address for x in db.tunnel_ips.all() ]
+        if self.local_ip in tunnel_ips:
+            tunnel_ips.remove(self.local_ip)
+        else:
+            db.tunnel_ips.insert(ip_address=self.local_ip)
+            db.commit()
+        return tunnel_ips
+
+
     def daemon_loop(self, db):
         '''Main processing loop (not currently used).
 
@@ -506,12 +508,14 @@ class OVSQuantumTunnelAgent(object):
         '''
         old_local_bindings = {}
         old_vif_ports = {}
+        old_tunnel_ips = set()
 
         while True:
             # Get bindings from db.
             all_bindings = self.get_db_port_bindings(db)
             all_bindings_vif_port_ids = set(all_bindings.keys())
             lsw_id_bindings = self.get_db_vlan_bindings(db)
+            tunnel_ips = set(self.get_tunnel_ips(db))
 
             # Get bindings from OVS bridge.
             vif_ports = self.int_br.get_vif_ports()
@@ -530,6 +534,12 @@ class OVSQuantumTunnelAgent(object):
                 new_local_bindings.get(p)) for p in new_vif_ports_ids)
             changed_bindings = set([b for b in new_bindings
                 if b[2] != b[1]])
+
+            new_tunnel_ips = tunnel_ips - old_tunnel_ips
+            for ip in new_tunnel_ips:
+                tun_name =  "gre-" + str(self.tunnel_count)
+                self.tun_br.add_tunnel_port(tun_name, ip)
+                self.tunnel_count += 1
 
             LOG.debug('all_bindings: %s' % all_bindings)
             LOG.debug('lsw_id_bindings: %s' % lsw_id_bindings)
@@ -588,6 +598,7 @@ class OVSQuantumTunnelAgent(object):
                         LOG.info("Unable to unbind Port " + str(p) +
                                  " on net-id = " + old_port.network_uuid)
 
+            old_tunnel_ips = tunnel_ips
             old_vif_ports = new_vif_ports
             old_local_bindings = new_local_bindings
             time.sleep(REFRESH_INTERVAL)
@@ -652,12 +663,6 @@ def main():
                 raise Exception('Empty tunnel-bridge in configuration file.')
 
             # Mandatory parameter.
-            remote_ip_file = config.get("OVS", "remote-ip-file")
-            if not len(remote_ip_file):
-                raise Exception('Empty remote-ip-file in configuration file.')
-
-            # Mandatory parameter.
-            remote_ip_file = config.get("OVS", "remote-ip-file")
             local_ip = config.get("OVS", "local-ip")
             if not len(local_ip):
                 raise Exception('Empty local-ip in configuration file.')
@@ -666,8 +671,7 @@ def main():
                       % (config_file, str(e)))
             sys.exit(1)
 
-        plugin = OVSQuantumTunnelAgent(integ_br, tun_br, remote_ip_file,
-                                       local_ip, root_helper)
+        plugin = OVSQuantumTunnelAgent(integ_br, tun_br, local_ip, root_helper)
     else:
         # Get parameters for OVSQuantumAgent.
         plugin = OVSQuantumAgent(integ_br, root_helper)
