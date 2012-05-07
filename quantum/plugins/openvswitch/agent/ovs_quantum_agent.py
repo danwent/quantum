@@ -577,7 +577,7 @@ class OVSQuantumTunnelAgent(object):
             lsw_id_bindings = self.get_db_vlan_bindings(db)
             if not self.db_connected:
                 continue
-            tunnel_ips = set(self.get_tunnel_ips)
+            tunnel_ips = set(self.get_tunnel_ips(db))
             if not self.db_connected:
                 continue
 
@@ -725,6 +725,8 @@ def main():
             LOG.info("Reconnect interval not defined. Using default.")
         root_helper = config.get("AGENT", "root_helper")
 
+
+
     except Exception as e:
         LOG.error("Error parsing common params in config_file: '%s': %s" %
                   (config_file, str(e)))
@@ -737,6 +739,11 @@ def main():
             tun_br = config.get("OVS", "tunnel-bridge")
             if not len(tun_br):
                 raise Exception('Empty tunnel-bridge in configuration file.')
+
+            # Mandatory parameter.
+            local_ip = config.get("OVS", "local-ip")
+            if not len(local_ip):
+                raise Exception('Empty local-ip in configuration file.')
 
         except Exception as e:
             LOG.error("Error parsing tunnel params in config_file: '%s': %s" %
