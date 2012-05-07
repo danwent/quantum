@@ -28,7 +28,8 @@ import subprocess
 import sys
 import time
 
-from sqlalchemy.ext.sqlsoup import SqlSoup
+import sqlalchemy
+from sqlalchemy.ext import sqlsoup
 
 from quantum.plugins.openvswitch import ovs_models
 
@@ -241,6 +242,10 @@ class OVSQuantumAgent(object):
         self.int_br.add_flow(priority=1, actions="normal")
 
     def daemon_loop(self, db_connection_url):
+        '''Main processing loop for Non-Tunneling Agent.
+
+        :param options: database information - in the event need to reconnect
+        '''
         self.local_vlan_map = {}
         old_local_bindings = {}
         old_vif_ports = {}
@@ -249,7 +254,7 @@ class OVSQuantumAgent(object):
         while True:
             if not db_connected:
                 time.sleep(self.reconnect_interval)
-                db = SqlSoup(db_connection_url)
+                db = sqlsoup.SqlSoup(db_connection_url)
                 db_connected = True
                 LOG.info("Connecting to database \"%s\" on %s" %
                          (db.engine.url.database, db.engine.url.host))
@@ -377,7 +382,6 @@ class OVSQuantumTunnelAgent(object):
         self.setup_integration_br(integ_br)
         self.local_vlan_map = {}
 
-        self.db_connected = False
         self.polling_interval = polling_interval
         self.reconnect_interval = reconnect_interval
 
@@ -494,91 +498,43 @@ class OVSQuantumTunnelAgent(object):
         # default drop
         self.tun_br.add_flow(priority=1, actions="drop")
 
-    def get_db_port_bindings(self, db):
-        '''Get database port bindings from central Quantum database.
-
-        The central quantum database 'ovs_quantum' resides on the openstack
-        mysql server.
-
-        :returns: a dictionary containing port bindings.'''
-        ports = []
-        try:
-            ports = db.ports.all()
-        except Exceptioni as e:
-            LOG.info("Unable to get port bindings! Exception: %s" % e)
-            self.db_connected = False
-            return {}
-
-        return dict([(port.interface_id, port) for port in ports])
-
-    def get_db_vlan_bindings(self, db):
-        '''Get database vlan bindings from central Quantum database.
-
-        The central quantum database 'ovs_quantum' resides on the openstack
-        mysql server.
-
-        :returns: a dictionary containing vlan bindings.'''
-        lsw_id_binds = []
-        try:
-            lsw_id_binds.extend(db.vlan_bindings.all())
-        except Exception as e:
-            LOG.info("Unable to get vlan bindings! Exception: %s" % e)
-            self.db_connected = False
-            return {}
-
-        return dict([(bind.network_id, bind.vlan_id)
-            for bind in lsw_id_binds])
-
-    def get_tunnel_ips(self, db):
-        '''Get list of tunnel IP addresses from Quantum database.
-        The central quantum database 'ovs_quantum' resides on the openstack
-        mysql server.
-
-        Also ensures that this node's IP is the main database table.
-
-        :returns: a list of all non-local ip addresses.'''
-        tunnel_ips = []
-        try:
-            tunnel_ips = [ x.ip_address for x in db.tunnel_ips.all() ]
-            if self.local_ip in tunnel_ips:
-                tunnel_ips.remove(self.local_ip)
-            else:
-                db.tunnel_ips.insert(ip_address=self.local_ip)
-                db.commit()
-        except Exception as e:
-            LOG.info("Unable to get tunnel IPs Exception: %s" % e)
-            self.db_connected = False
-
-        return tunnel_ips
 
     def daemon_loop(self, db_connection_url):
-        '''Main processing loop (not currently used).
+        '''Main processing loop for Tunneling Agent.
 
         :param options: database information - in the event need to reconnect
         '''
         old_local_bindings = {}
         old_vif_ports = {}
         old_tunnel_ips = set()
-        self.db_connected = False
+        db_connected = False
 
         while True:
-            if not self.db_connected:
+            if not db_connected:
                 time.sleep(self.reconnect_interval)
-                db = SqlSoup(db_connection_url)
-                self.db_connected = True
+                db = sqlsoup.SqlSoup(db_connection_url)
+                db_connected = True
                 LOG.info("Connecting to database \"%s\" on %s" %
                          (db.engine.url.database, db.engine.url.host))
 
-            # Get bindings from db.
-            all_bindings = self.get_db_port_bindings(db)
-            if not self.db_connected:
+            try:
+                all_bindings = dict([(p.interface_id, p)
+                                    for p in db.ports.all()])
+                all_bindings_vif_port_ids = set(all_bindings.keys())
+                lsw_id_bindings = dict([(bind.network_id, bind.vlan_id)
+                                       for bind in db.vlan_bindings.all()])
+                tunnel_ips = set([ x.ip_address for x in db.tunnel_ips.all() ])
+                if self.local_ip in tunnel_ips:
+                    tunnel_ips.remove(self.local_ip)
+                else:
+                    db.tunnel_ips.insert(ip_address=self.local_ip)
+            except sqlalchemy.exc.SQLAlchemyError as e:
+                LOG.info("DB Error: %s" % e)
+                db_connected = False
                 continue
-            all_bindings_vif_port_ids = set(all_bindings.keys())
-            lsw_id_bindings = self.get_db_vlan_bindings(db)
-            if not self.db_connected:
-                continue
-            tunnel_ips = set(self.get_tunnel_ips(db))
-            if not self.db_connected:
+            except Exception as e:
+                LOG.error("Unexpected Exception: %s" % e)
+                db_connected = False
                 continue
 
             new_tunnel_ips = tunnel_ips - old_tunnel_ips
@@ -632,6 +588,7 @@ class OVSQuantumTunnelAgent(object):
                              old_net_uuid + " for " + str(p)
                              + " added to dead vlan")
                     self.port_unbound(p, old_net_uuid)
+                    all_bindings[p.vif_id].op_status = OP_STATUS_DOWN
                     if not new_port:
                         self.port_dead(p)
 
@@ -645,6 +602,7 @@ class OVSQuantumTunnelAgent(object):
                     lsw_id = lsw_id_bindings[new_net_uuid]
                     try:
                         self.port_bound(p, new_net_uuid, lsw_id)
+                        all_bindings[p.vif_id].op_status = OP_STATUS_UP
                         LOG.info("Port " + str(p) + " on net-id = "
                                  + new_net_uuid + " bound to " +
                                  str(self.local_vlan_map[new_net_uuid]))
@@ -655,6 +613,8 @@ class OVSQuantumTunnelAgent(object):
 
             for vif_id in disappeared_vif_ports_ids:
                 LOG.info("Port Disappeared: " + vif_id)
+                if vif_id in all_bindings:
+                    all_bindings[vif_id].op_status = OP_STATUS_DOWN
                 old_port = old_local_bindings.get(vif_id)
                 if old_port:
                     try:
@@ -663,6 +623,13 @@ class OVSQuantumTunnelAgent(object):
                     except Exception:
                         LOG.info("Unable to unbind Port " + str(p) +
                                  " on net-id = " + old_port.network_uuid)
+            try:
+                # commit any DB changes and expire
+                # data loaded from the database
+                db.commit()
+            except Exception as e:
+                LOG.error("Exception on DB commit: %s" % e)
+                continue # don't update notion of old bindings
 
             old_tunnel_ips = tunnel_ips
             old_vif_ports = new_vif_ports
