@@ -29,9 +29,6 @@ LOG = logging.getLogger("quantum.plugins.openvswitch.tests.unit.test_tunnel")
 LOG.setLevel(logging.INFO)
 
 
-LOCAL_DIR = os.path.dirname(__file__)
-REMOTE_IP_FILE = LOCAL_DIR + '/remote-ip-file.txt'
-
 # Useful global dummy variables.
 NET_UUID = '3faeebfe-5d37-11e1-a64b-000c29d5f0a7'
 LS_ID = '42'
@@ -58,7 +55,6 @@ class DummyVlanBinding:
 class TunnelTest(unittest.TestCase):
 
     def setUp(self):
-        print LOCAL_DIR
         self.mox = mox.Mox()
 
         self.INT_BRIDGE = 'integration_bridge'
@@ -91,7 +87,6 @@ class TunnelTest(unittest.TestCase):
 
         b = ovs_quantum_agent.OVSQuantumTunnelAgent(self.INT_BRIDGE,
                                                     self.TUN_BRIDGE,
-                                                    REMOTE_IP_FILE,
                                                     '10.0.0.1',
                                                     'sudo', 2, 2)
         self.mox.VerifyAll()
@@ -111,7 +106,6 @@ class TunnelTest(unittest.TestCase):
 
         a = ovs_quantum_agent.OVSQuantumTunnelAgent(self.INT_BRIDGE,
                                                     self.TUN_BRIDGE,
-                                                    REMOTE_IP_FILE,
                                                     '10.0.0.1',
                                                     'sudo', 2, 2)
         a.available_local_vlans = set([LV_ID])
@@ -128,7 +122,6 @@ class TunnelTest(unittest.TestCase):
         self.mox.ReplayAll()
         a = ovs_quantum_agent.OVSQuantumTunnelAgent(self.INT_BRIDGE,
                                                     self.TUN_BRIDGE,
-                                                    REMOTE_IP_FILE,
                                                     '10.0.0.1',
                                                     'sudo', 2, 2)
         a.available_local_vlans = set()
@@ -145,7 +138,6 @@ class TunnelTest(unittest.TestCase):
         self.mox.ReplayAll()
         a = ovs_quantum_agent.OVSQuantumTunnelAgent(self.INT_BRIDGE,
                                                     self.TUN_BRIDGE,
-                                                    REMOTE_IP_FILE,
                                                     '10.0.0.1',
                                                     'sudo', 2, 2)
         a.local_vlan_map[NET_UUID] = LVM
@@ -156,7 +148,6 @@ class TunnelTest(unittest.TestCase):
         self.mox.ReplayAll()
         a = ovs_quantum_agent.OVSQuantumTunnelAgent(self.INT_BRIDGE,
                                                     self.TUN_BRIDGE,
-                                                    REMOTE_IP_FILE,
                                                     '10.0.0.1',
                                                     'sudo', 2, 2)
         a.available_local_vlans = set([LV_ID])
@@ -175,41 +166,9 @@ class TunnelTest(unittest.TestCase):
         self.mox.ReplayAll()
         a = ovs_quantum_agent.OVSQuantumTunnelAgent(self.INT_BRIDGE,
                                                     self.TUN_BRIDGE,
-                                                    REMOTE_IP_FILE,
                                                     '10.0.0.1',
                                                     'sudo', 2, 2)
         a.available_local_vlans = set([LV_ID])
         a.local_vlan_map[NET_UUID] = LVM
         a.port_dead(VIF_PORT)
-        self.mox.VerifyAll()
-
-    def testDbBindings(self):
-        db = self.mox.CreateMockAnything()
-        db.ports = self.mox.CreateMockAnything()
-        interface_ids = ['interface-id-%d' % x for x in range(3)]
-        db.ports.all().AndReturn([DummyPort(x) for x in interface_ids])
-
-        db.vlan_bindings = self.mox.CreateMockAnything()
-        vlan_bindings = [
-            ['network-id-%d' % x, 'vlan-id-%d' % x] for x in range(3)]
-        db.vlan_bindings.all().AndReturn(
-            [DummyVlanBinding(*x) for x in vlan_bindings])
-
-        self.mox.ReplayAll()
-        a = ovs_quantum_agent.OVSQuantumTunnelAgent(self.INT_BRIDGE,
-                                                    self.TUN_BRIDGE,
-                                                    REMOTE_IP_FILE,
-                                                    '10.0.0.1',
-                                                    'sudo', 2, 2)
-
-        all_bindings = a.get_db_port_bindings(db)
-        lsw_id_bindings = a.get_db_vlan_bindings(db)
-
-        for interface_id, port in all_bindings.iteritems():
-            self.assertTrue(interface_id in interface_ids)
-
-        for network_id, vlan_id in lsw_id_bindings.iteritems():
-            self.assertTrue(network_id in [x[0] for x in vlan_bindings])
-            self.assertTrue(vlan_id in [x[1] for x in vlan_bindings])
-
         self.mox.VerifyAll()

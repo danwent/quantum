@@ -498,7 +498,6 @@ class OVSQuantumTunnelAgent(object):
         # default drop
         self.tun_br.add_flow(priority=1, actions="drop")
 
-
     def daemon_loop(self, db_connection_url):
         '''Main processing loop for Tunneling Agent.
 
@@ -523,7 +522,7 @@ class OVSQuantumTunnelAgent(object):
                 all_bindings_vif_port_ids = set(all_bindings.keys())
                 lsw_id_bindings = dict([(bind.network_id, bind.vlan_id)
                                        for bind in db.vlan_bindings.all()])
-                tunnel_ips = set([ x.ip_address for x in db.tunnel_ips.all() ])
+                tunnel_ips = set([x.ip_address for x in db.tunnel_ips.all()])
                 if self.local_ip in tunnel_ips:
                     tunnel_ips.remove(self.local_ip)
                 else:
@@ -541,7 +540,7 @@ class OVSQuantumTunnelAgent(object):
             if new_tunnel_ips:
                 LOG.info("adding tunnels to: %s" % new_tunnel_ips)
             for ip in new_tunnel_ips:
-                tun_name =  "gre-" + str(self.tunnel_count)
+                tun_name = "gre-" + str(self.tunnel_count)
                 self.tun_br.add_tunnel_port(tun_name, ip)
                 self.tunnel_count += 1
 
@@ -629,7 +628,7 @@ class OVSQuantumTunnelAgent(object):
                 db.commit()
             except Exception as e:
                 LOG.error("Exception on DB commit: %s" % e)
-                continue # don't update notion of old bindings
+                continue  # don't update notion of old bindings
 
             old_tunnel_ips = tunnel_ips
             old_vif_ports = new_vif_ports
@@ -691,8 +690,6 @@ def main():
             reconnect_interval = DEFAULT_RECONNECT_INTERVAL
             LOG.info("Reconnect interval not defined. Using default.")
         root_helper = config.get("AGENT", "root_helper")
-
-
 
     except Exception as e:
         LOG.error("Error parsing common params in config_file: '%s': %s" %
