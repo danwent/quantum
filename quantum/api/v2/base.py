@@ -101,12 +101,12 @@ def create_resource(collection, resource, plugin, conf):
 
     body_serializers = {
     #    'application/xml': xml_serializer,
-        'application/json': lambda x: json.dumps(x)
+        'application/json': wsgi.JSONDictSerializer()
     }
 
     body_deserializers = {
     #    'application/xml': xml_deserializer,
-        'application/json': lambda x: json.loads(x)
+        'application/json': wsgi.JSONDeserializer()
     }
 
     serializer = wsgi.ResponseSerializer(body_serializers,
@@ -119,34 +119,37 @@ def create_resource(collection, resource, plugin, conf):
                          deserializer,
                          serializer)
 
+#TODO(danwent): need a real auth context once we have
+# keystone integration.  In the mean time, just fake it.
+
+AUTH_CONTEXT = {}
 
 # TODO(anyone): super generic first cut
 class Controller(api_common.QuantumController):
+
     def __init__(self, plugin, collection, resource):
         super(Controller, self).__init__(plugin)
         self._plugin = plugin
         self._collection = collection
-        self._resource = resource
-        self._view = getattr(views, self._resource)
+        self._resource_name = resource
+        self._view = getattr(views, self._resource_name)
 
     def _items(self, request):
         kwargs = dict(filters=filters(request),
                       verbose=verbose(request),
                       show=show(request))
 
-        obj_getter = getattr(self._plugin,
-                             "get_all_%s" % self._collection)
-        obj_list = obj_getter(**kwargs)
+        obj_getter = getattr(self._plugin, "get_all_%s" % self._collection)
+        obj_list = obj_getter(AUTH_CONTEXT, **kwargs)
 
         return {self._collection: [self._view(obj) for obj in obj_list]}
 
     def _item(self, request, id):
         kwargs = dict(verbose=verbose(request),
                       show=show(request))
-        obj_getter = getattr(self._plugin,
-                             "get_%s_details" % self._resource)
-        obj = obj_getter(id, **kwargs)
-        return {self._resource: self._view(obj)}
+        obj_getter = getattr(self._plugin, "get_%s" % self._resource_name)
+        obj = obj_getter(AUTH_CONTEXT, id, **kwargs)
+        return {self._resource_name: self._view(obj)}
 
     def index(self, request):
         return self._items(request)
@@ -155,20 +158,23 @@ class Controller(api_common.QuantumController):
         return self._item(request, id)
 
     def create(self, request, body):
-        body = self._prepare_request_body(body)
+        #TODO(danwent): need to do input validation
+        # and defaults here.  This is what _prepare_request_body
+        # normally does.  For now, just pass in an empty dict
+        body = self._prepare_request_body(body, {})
         obj_creator = getattr(self._plugin,
-                              "create_%s" % self._resource)
-        obj = obj_creator(body)
-        return {self._resource: self._view(obj)}
+                              "create_%s" % self._resource_name)
+        obj = obj_creator(AUTH_CONTEXT, body)
+        return {self._resource_name: self._view(obj)}
 
     def delete(self, request, id):
         obj_deleter = getattr(self._plugin,
-                              "delete_%s" % self._resource)
-        obj_deleter(id)
+                              "delete_%s" % self._resource_name)
+        obj_deleter(AUTH_CONTEXT, id)
 
     def update(self, request, id, body):
         body = self._prepare_request_body(body)
         obj_updater = getattr(self._plugin,
-                              "update_%s" % self._resource)
+                              "update_%s" % self._resource_name)
         obj = obj_updater(body)
-        return {self._resource: self._view(obj)}
+        return {self._resource_name: self._view(obj)}
