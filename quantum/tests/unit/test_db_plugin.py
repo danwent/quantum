@@ -44,7 +44,9 @@ def etcdir(*p):
 
 
 class QuantumDbPluginV2TestCase(unittest2.TestCase):
-    def setUp(self):
+
+
+    def setUp(self, plugin=None):
         super(QuantumDbPluginV2TestCase, self).setUp()
 
         # NOTE(jkoelker) for a 'pluggable' framework, Quantum sure
@@ -61,7 +63,8 @@ class QuantumDbPluginV2TestCase(unittest2.TestCase):
             'application/json': json_deserializer,
         }
 
-        plugin = 'quantum.db.db_base_plugin_v2.QuantumDbPluginV2'
+        if not plugin:
+            plugin = 'quantum.db.db_base_plugin_v2.QuantumDbPluginV2'
         # Create the default configurations
         args = ['--config-file', etcdir('quantum.conf.test')]
         config.parse(args=args)
@@ -79,11 +82,14 @@ class QuantumDbPluginV2TestCase(unittest2.TestCase):
         cfg.CONF.reset()
 
     def _req(self, method, resource, data=None, fmt='json',
-             id=None, params=None):
-        if id:
+             id=None, params=None, action=None):
+        if id and action:
+            path = '/%(resource)s/%(id)s/%(action)s.%(fmt)s' % locals()
+        elif id:
             path = '/%(resource)s/%(id)s.%(fmt)s' % locals()
         else:
             path = '/%(resource)s.%(fmt)s' % locals()
+
         content_type = 'application/%s' % fmt
         body = None
         if data:
@@ -108,6 +114,9 @@ class QuantumDbPluginV2TestCase(unittest2.TestCase):
 
     def new_update_request(self, resource, data, id, fmt='json'):
         return self._req('PUT', resource, data, fmt, id=id)
+
+    def new_action_request(self, resource, data, id, action, fmt='json'):
+        return self._req('PUT', resource, data, fmt, id=id, action=action)
 
     def deserialize(self, content_type, response):
         ctype = 'application/%s' % content_type
@@ -138,7 +147,7 @@ class QuantumDbPluginV2TestCase(unittest2.TestCase):
                            'network_id': net_id,
                            'cidr': cidr,
                            'ip_version': ip_version,
-                           'tenant_id': self._tenant_id}}
+                          }}
         if gateway_ip:
             data['subnet']['gateway_ip'] = gateway_ip
         if allocation_pools:

@@ -46,8 +46,10 @@ class LinuxInterfaceDriver(object):
     def __init__(self, conf):
         self.conf = conf
 
-    def init_l3(self, port, device_name):
-        """Set the L3 settings for the interface using data from the port."""
+    def init_l3(self, device_name, ip_cidrs):
+        """Set the L3 settings for the interface using data from the port.
+           ip_cidrs: list of 'X.X.X.X/YY' strings
+        """
         device = ip_lib.IPDevice(device_name, self.conf.root_helper)
 
         previous = {}
@@ -55,11 +57,9 @@ class LinuxInterfaceDriver(object):
             previous[address['cidr']] = address['ip_version']
 
         # add new addresses
-        for fixed_ip in port.fixed_ips:
-            subnet = fixed_ip.subnet
-            net = netaddr.IPNetwork(subnet.cidr)
-            ip_cidr = '%s/%s' % (fixed_ip.ip_address, net.prefixlen)
+        for ip_cidr in ip_cidrs:
 
+            net = netaddr.IPNetwork(ip_cidr)
             if ip_cidr in previous:
                 del previous[ip_cidr]
                 continue

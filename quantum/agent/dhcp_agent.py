@@ -22,6 +22,7 @@ import sys
 import time
 import uuid
 
+import netaddr
 from sqlalchemy.ext import sqlsoup
 
 from quantum.agent.common import config
@@ -233,7 +234,14 @@ class DeviceManager(object):
                              port.id,
                              interface_name,
                              port.mac_address)
-        self.driver.init_l3(port, interface_name)
+        ip_cidrs = []
+        for fixed_ip in port.fixed_ips:
+            subnet = fixed_ip.subnet
+            net = netaddr.IPNetwork(subnet.cidr)
+            ip_cidr = '%s/%s' % (fixed_ip.ip_address, net.prefixlen)
+            ip_cidrs.append(ip_cidr)
+
+        self.driver.init_l3(interface_name, ip_cidrs)
 
     def destroy(self, network):
         self.driver.unplug(self.get_interface_name(network))

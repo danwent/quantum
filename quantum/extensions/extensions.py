@@ -422,6 +422,20 @@ class ExtensionManager(object):
                 # attributes
                 pass
 
+    def add_resources(self, version, resources):
+        """Add new resources implemented by extensions."""
+        for ext in self.extensions.itervalues():
+            try:
+                for rname, rinfo in ext.get_added_resources(version):
+                    if rname in resources:
+                        raise Exception("Multiple extensions attempted to "
+                                        "register resources %s" % r)
+                    resources[rname] = rinfo
+
+            except AttributeError:
+                # Extensions aren't required to have additional resources
+                pass
+
     def _check_extension(self, extension):
         """Checks for required methods in extension objects."""
         try:

@@ -113,6 +113,7 @@ class Controller(object):
                               and info['required_by_policy']]
 
     def _is_visible(self, attr):
+
         attr_val = self._attr_info.get(attr)
         return attr_val and attr_val['is_visible']
 
@@ -120,6 +121,7 @@ class Controller(object):
         # make sure fields_to_strip is iterable
         if not fields_to_strip:
             fields_to_strip = []
+
         return dict(item for item in data.iteritems()
                     if self._is_visible(item[0])
                     and not item[0] in fields_to_strip)
@@ -365,6 +367,11 @@ class Controller(object):
                     raise webob.exc.HTTPUnprocessableEntity(msg)
 
         return body
+
+    def add_router_interface(self, request, router_id=None, body=None):
+        # TODO(danwent): validate input, check policy
+        return self._plugin.add_router_interface(request.context, router_id,
+                                                 body)
 
     def _validate_network_tenant_ownership(self, request, resource_item):
         if self._resource not in ('port', 'subnet'):

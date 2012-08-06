@@ -93,6 +93,7 @@ setuptools.setup(
     entry_points={
         'console_scripts': [
             'quantum-dhcp-agent = quantum.agent.dhcp_agent:main',
+            'quantum-l3-agent = quantum.agent.l3_nat_agent:main',
             'quantum-linuxbridge-agent ='
             'quantum.plugins.linuxbridge.agent.linuxbridge_quantum_agent:main',
             'quantum-openvswitch-agent ='

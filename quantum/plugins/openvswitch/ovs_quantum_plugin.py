@@ -29,6 +29,7 @@ from quantum.common import exceptions as q_exc
 from quantum.common.utils import find_config_file
 from quantum.db import api as db
 from quantum.db import db_base_plugin_v2
+from quantum.db import l3_nat_db
 from quantum.db import models_v2
 from quantum.openstack.common import cfg
 from quantum.plugins.openvswitch.common import config
@@ -247,7 +248,9 @@ class OVSQuantumPlugin(QuantumPluginBase):
         return res.interface_id
 
 
-class OVSQuantumPluginV2(db_base_plugin_v2.QuantumDbPluginV2):
+class OVSQuantumPluginV2(db_base_plugin_v2.QuantumDbPluginV2,
+                         l3_nat_db.L3_NAT_db_mixin):
+
     """Implement the Quantum abstractions using Open vSwitch.
 
     Depending on whether tunneling is enabled, either a GRE tunnel or
@@ -262,7 +265,7 @@ class OVSQuantumPluginV2(db_base_plugin_v2.QuantumDbPluginV2):
     be updated to take advantage of it.
     """
 
-    supported_extension_aliases = ["provider"]
+    supported_extension_aliases = ["provider", "os-quantum-router"]
 
     def __init__(self, configfile=None):
         self.enable_tunneling = cfg.CONF.OVS.enable_tunneling
@@ -272,6 +275,7 @@ class OVSQuantumPluginV2(db_base_plugin_v2.QuantumDbPluginV2):
         options.update({"sql_max_retries": sql_max_retries})
         reconnect_interval = cfg.CONF.DATABASE.reconnect_interval
         options.update({"reconnect_interval": reconnect_interval})
+        print "db options: %s" % options
         db.configure_db(options)
 
         self.vmap = VlanMap(cfg.CONF.OVS.vlan_min, cfg.CONF.OVS.vlan_max)

@@ -30,9 +30,9 @@ from quantum import wsgi
 
 
 LOG = logging.getLogger(__name__)
-COLLECTION_ACTIONS = ['index', 'create']
-MEMBER_ACTIONS = ['show', 'update', 'delete']
-REQUIREMENTS = {'id': attributes.UUID_PATTERN, 'format': 'xml|json'}
+DEFAULT_COLLECTION_ACTIONS = ['index', 'create']
+DEFAULT_MEMBER_ACTIONS = ['show', 'update', 'delete']
+DEFAULT_REQUIREMENTS = {'id': attributes.UUID_PATTERN, 'format': 'xml|json'}
 
 
 class Index(wsgi.Application):
@@ -73,26 +73,40 @@ class APIRouter(wsgi.Router):
         ext_mgr = extensions.PluginAwareExtensionManager.get_instance()
         ext_mgr.extend_resources("2.0", attributes.RESOURCE_ATTRIBUTE_MAP)
 
-        col_kwargs = dict(collection_actions=COLLECTION_ACTIONS,
-                          member_actions=MEMBER_ACTIONS)
+        resources = {'network': {'collection_name': 'networks'},
+                     'subnet': {'collection_name': 'subnets'},
+                     'port': {'collection_name': 'ports'}}
 
-        resources = {'network': 'networks',
-                     'subnet': 'subnets',
-                     'port': 'ports'}
-
-        def _map_resource(collection, resource, params):
-            controller = base.create_resource(collection, resource,
-                                              plugin, params)
-            mapper_kwargs = dict(controller=controller,
-                                 requirements=REQUIREMENTS,
-                                 **col_kwargs)
-            return mapper.collection(collection, resource,
-                                     **mapper_kwargs)
-
+        ext_mgr.add_resources("2.0", resources)
         mapper.connect('index', '/', controller=Index(resources))
-        for resource in resources:
-            _map_resource(resources[resource], resource,
-                          attributes.RESOURCE_ATTRIBUTE_MAP.get(
-                              resources[resource], dict()))
+
+        for resource_name, resource_info in resources.iteritems():
+            params = attributes.RESOURCE_ATTRIBUTE_MAP.get(
+                resource_info['collection_name'], dict())
+
+            collection_actions = resource_info.get('collection_actions',
+                                                   DEFAULT_COLLECTION_ACTIONS)
+            member_actions = resource_info.get('member_actions',
+                                               DEFAULT_MEMBER_ACTIONS)
+            controller = base.create_resource(resource_info['collection_name'],
+                                              resource_name,
+                                              plugin, params)
+
+            mapper.collection(resource_info['collection_name'],
+                              resource_name,
+                              controller=controller,
+                              requirements=DEFAULT_REQUIREMENTS,
+                              collection_actions=collection_actions,
+                              member_actions=member_actions)
+
+            if resource_name == "router":
+                for action in ["add_router_interface"]:
+                    conditions = dict(method=['PUT'])
+                    path = "/routers/{router_id}/%s" % action
+                    with mapper.submapper(controller=controller,
+                                      action=action,
+                                      conditions=conditions) as submap:
+                        submap.connect(path)
+                        submap.connect("%s{.format}" % path)
 
         super(APIRouter, self).__init__(mapper)

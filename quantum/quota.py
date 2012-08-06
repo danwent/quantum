@@ -33,6 +33,13 @@ quota_opts = [
     cfg.IntOpt('quota_port',
                default=50,
                help='number of ports allowed per tenant, -1 for unlimited'),
+    cfg.IntOpt('quota_router',
+               default=10,
+               help='number of routers allowed per tenant, -1 for unlimited'),
+    cfg.IntOpt('quota_floatingip',
+               default=50,
+               help='number of floating IPs allowed per tenant, '
+                    '-1 for unlimited'),
     cfg.StrOpt('quota_driver',
                default='quantum.quota.ConfDriver',
                help='default driver to use for quota checks'),
@@ -256,6 +263,8 @@ resources = [
     CountableResource('network', _count_resource, 'quota_network'),
     CountableResource('subnet', _count_resource, 'quota_subnet'),
     CountableResource('port', _count_resource, 'quota_port'),
+    CountableResource('router', _count_resource, 'quota_router'),
+    CountableResource('floatingip', _count_resource, 'quota_floatingip'),
 ]
 
 
